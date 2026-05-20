@@ -46,7 +46,7 @@ func TestRunPrintsPartialSummaryBeforeError(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("run() code = %d, want 1", code)
 	}
-	if got, want := stdout.String(), "files=1 success=0 skipped=0 failed=1 source=10 output=0\n"; got != want {
+	if got, want := stdout.String(), "files=1 success=0 skipped=0 failed=1 saved=10 (100.0%)\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 	if got, want := stderr.String(), "context canceled\n"; got != want {
@@ -76,7 +76,7 @@ func TestRunPrintsZeroSummaryOnSuccessWithoutFiles(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run() code = %d, want 0", code)
 	}
-	if got, want := stdout.String(), "files=0 success=0 skipped=0 failed=0 source=0 output=0\n"; got != want {
+	if got, want := stdout.String(), "files=0 success=0 skipped=0 failed=0 saved=0 (0.0%)\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 	if stderr.Len() != 0 {

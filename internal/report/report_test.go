@@ -38,7 +38,7 @@ func TestPrintSummaryFormatsCountsAndSizes(t *testing.T) {
 		OutputBytes: 1500,
 	})
 
-	if got, want := buf.String(), "files=3 success=1 skipped=1 failed=1 source=2500 output=1500\n"; got != want {
+	if got, want := buf.String(), "files=3 success=1 skipped=1 failed=1 saved=1000 (40.0%)\n"; got != want {
 		t.Fatalf("PrintSummary() = %q, want %q", got, want)
 	}
 }
