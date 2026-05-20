@@ -22,6 +22,21 @@ go install github.com/zoulux/img2webp@latest
 
 从 [Releases 页面](https://github.com/zoulux/img2webp/releases) 下载对应平台的二进制文件。
 
+下载后需要授权才能执行：
+
+```bash
+# macOS / Linux
+chmod +x img2webp-*
+
+# 然后运行
+./img2webp-darwin-arm64  # 以 macOS Apple Silicon 为例
+```
+
+> **macOS 用户注意**：首次运行可能会提示安全警告。前往 `系统设置 > 隐私与安全性` 点击"仍要打开"，或者运行：
+> ```bash
+> xattr -d com.apple.quarantine img2webp-darwin-arm64
+> ```
+
 | 平台 | 架构 | 文件 |
 |------|------|------|
 | macOS | Apple Silicon (M1/M2/M3) | `img2webp-darwin-arm64` |

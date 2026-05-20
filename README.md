@@ -22,6 +22,21 @@ go install github.com/zoulux/img2webp@latest
 
 Download the latest release for your platform from the [Releases page](https://github.com/zoulux/img2webp/releases).
 
+After downloading, grant execute permission:
+
+```bash
+# macOS / Linux
+chmod +x img2webp-*
+
+# Then run
+./img2webp-darwin-arm64  # example for macOS Apple Silicon
+```
+
+> **Note for macOS users**: On first run, you may see a security warning. Go to `System Preferences > Privacy & Security` and click "Open Anyway", or run:
+> ```bash
+> xattr -d com.apple.quarantine img2webp-darwin-arm64
+> ```
+
 | Platform | Architecture | Binary |
 |----------|-------------|--------|
 | macOS | Apple Silicon (M1/M2/M3) | `img2webp-darwin-arm64` |
