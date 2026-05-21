@@ -118,7 +118,7 @@ func TestAnalyzeFileDecodesPNGAndMatchesAnalyzeImage(t *testing.T) {
 		t.Fatalf("Close returned error: %v", err)
 	}
 
-	got, err := AnalyzeFile(path)
+	got, _, err := AnalyzeFile(path)
 	if err != nil {
 		t.Fatalf("AnalyzeFile returned error: %v", err)
 	}

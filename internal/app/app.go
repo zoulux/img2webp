@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	_ "golang.org/x/image/webp"
 	decoderwebp "golang.org/x/image/webp"
@@ -25,6 +26,21 @@ import (
 	"github.com/zoulux/img2webp/internal/report"
 	"github.com/zoulux/img2webp/internal/strategy"
 )
+
+var cwebpSem = make(chan struct{}, runtime.NumCPU())
+
+func acquireCwebpSlot(ctx context.Context) error {
+	select {
+	case cwebpSem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func releaseCwebpSlot() {
+	<-cwebpSem
+}
 
 type Result struct {
 	Summary report.Summary
@@ -49,6 +65,54 @@ func New(opts *Options) *App {
 	return app
 }
 
+type fileJob struct {
+	index     int
+	inputPath string
+}
+
+type analyzedFile struct {
+	index      int
+	inputPath  string
+	outputPath string
+	features   analyze.Features
+	kind       analyze.Kind
+	mode       strategy.Mode
+	candidates []strategy.Candidate
+	sourceInfo os.FileInfo
+	original   image.Image
+	result     report.Result
+	tempDir    string
+}
+
+type encodedFile struct {
+	index            int
+	inputPath        string
+	outputPath       string
+	candidates       []strategy.Candidate
+	candidateResults []encode.CandidateResult
+	sourceInfo       os.FileInfo
+	result           report.Result
+	tempDir          string
+}
+
+type indexedResult struct {
+	index  int
+	result report.Result
+}
+
+type errorRecorder struct {
+	mu         sync.Mutex
+	firstError error
+}
+
+func (e *errorRecorder) record(err error) {
+	e.mu.Lock()
+	if e.firstError == nil {
+		e.firstError = err
+	}
+	e.mu.Unlock()
+}
+
 func (a *App) Run(ctx context.Context, cfg cli.Config) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -71,120 +135,148 @@ func (a *App) Run(ctx context.Context, cfg cli.Config) (Result, error) {
 
 	workers := cfg.Workers
 	if workers <= 0 {
-		workers = runtime.NumCPU()
-	}
-	if workers > len(inputs) {
-		workers = len(inputs)
-	}
-
-	type indexedResult struct {
-		index  int
-		result report.Result
+		workers = int(float64(runtime.NumCPU()) * 1.5)
+		if workers < 1 {
+			workers = 1
+		}
 	}
 
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	results := make([]indexedResult, 0, len(inputs))
 	total := len(inputs)
 
-	// Track progress per file for unified progress display
-	fileProgress := make([]float64, total) // 0.0 to 1.0 per file
+	jobsCh := make(chan fileJob, workers)
+	go func() {
+		for i, input := range inputs {
+			jobsCh <- fileJob{index: i, inputPath: input}
+		}
+		close(jobsCh)
+	}()
 
-	for i, input := range inputs {
-		wg.Add(1)
-		go func(idx int, in string) {
-			defer wg.Done()
-
-			progressCb := func(stage report.ProgressStage, stageProgress float64) {
-				if a.onProgress == nil {
-					return
+	analyzedCh := make(chan analyzedFile, workers)
+	var wgAnalyze sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wgAnalyze.Add(1)
+		go func() {
+			defer wgAnalyze.Done()
+			for job := range jobsCh {
+				if err := ctx.Err(); err != nil {
+					analyzedCh <- analyzedFile{
+						index:     job.index,
+						inputPath: job.inputPath,
+						result:    report.Result{InputPath: job.inputPath, Status: report.StatusFailed, Message: err.Error()},
+					}
+					continue
 				}
-
-				// Calculate this file's progress (each stage is ~1/3 of file progress)
-				var filePct float64
-				switch stage {
-				case report.StageAnalyzing:
-					filePct = stageProgress * 0.1 // Analyzing is 10% of file work
-				case report.StageEncoding:
-					filePct = 0.1 + stageProgress*0.8 // Encoding is 80% of file work
-				case report.StageScoring:
-					filePct = 0.9 + stageProgress*0.1 // Scoring is 10% of file work
-				case report.StageDone:
-					filePct = 1.0
-				}
-
-				mu.Lock()
-				fileProgress[idx] = filePct
-				// Sum all file progress for unified progress
-				var totalProgress float64
-				for _, p := range fileProgress {
-					totalProgress += p
-				}
-				mu.Unlock()
-
-				// Report unified progress
-				a.onProgress(report.Progress{
-					FileIndex:     int(totalProgress * 100),
-					TotalFiles:    total * 100,
-					Stage:         stage,
-					StageProgress: stageProgress,
-					InputPath:     in,
-				})
+				file := a.analyzeFile(rootInput, job.inputPath, cfg)
+				analyzedCh <- file
 			}
-
-			fileResult := a.processFile(ctx, &binaryPath, rootInput, in, cfg, progressCb)
-
-			mu.Lock()
-			results = append(results, indexedResult{index: idx, result: fileResult})
-			mu.Unlock()
-		}(i, input)
+		}()
 	}
+	go func() {
+		wgAnalyze.Wait()
+		close(analyzedCh)
+	}()
 
-	wg.Wait()
+	encodedCh := make(chan encodedFile, workers)
+	var wgEncode sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wgEncode.Add(1)
+		go func() {
+			defer wgEncode.Done()
+			for file := range analyzedCh {
+				if file.result.Status == report.StatusFailed || file.result.Status == report.StatusSkipped {
+					encodedCh <- encodedFile{
+						index:      file.index,
+						inputPath:  file.inputPath,
+						sourceInfo: file.sourceInfo,
+						result:     file.result,
+					}
+					continue
+				}
+				encoded := a.encodeFile(ctx, &binaryPath, file)
+				encodedCh <- encoded
+			}
+		}()
+	}
+	go func() {
+		wgEncode.Wait()
+		close(encodedCh)
+	}()
+
+	var mu sync.Mutex
+	results := make([]indexedResult, 0, total)
+	var completedCount int64
+
+	for encoded := range encodedCh {
+		fileResult := encoded.result
+		if fileResult.Status == report.StatusSuccess && len(encoded.candidateResults) > 0 {
+			picked, ok := encode.PickSmallestPassingWithSizeCheck(encoded.candidateResults, encoded.sourceInfo.Size())
+			if !ok {
+				fileResult.Status = report.StatusFailed
+				fileResult.Message = "no candidate met quality thresholds"
+			} else if err := fs.CopyFile(picked.Path, fileResult.OutputPath); err != nil {
+				fileResult.Status = report.StatusFailed
+				fileResult.Message = err.Error()
+			} else {
+				if outInfo, err := os.Stat(fileResult.OutputPath); err == nil {
+					fileResult.OutputBytes = outInfo.Size()
+				}
+				fileResult.Message = string(encoded.candidates[0].Kind)
+			}
+		}
+
+		if encoded.tempDir != "" {
+			os.RemoveAll(encoded.tempDir)
+		}
+
+		mu.Lock()
+		results = append(results, indexedResult{index: encoded.index, result: fileResult})
+		mu.Unlock()
+
+		if a.onProgress != nil {
+			completed := int(atomic.AddInt64(&completedCount, 1))
+			a.onProgress(report.Progress{
+				FileIndex:  completed * 100,
+				TotalFiles: total * 100,
+				Stage:      report.StageDone,
+			})
+		}
+	}
 
 	if err := ctx.Err(); err != nil {
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].index < results[j].index
-		})
-
-		result := Result{Results: make([]report.Result, 0, len(results))}
-		for _, r := range results {
-			result.Results = append(result.Results, r.result)
-			result.Summary.Add(r.result)
-		}
-		return result, err
+		return buildResult(results), err
 	}
+	return buildResult(results), nil
+}
 
+func buildResult(results []indexedResult) Result {
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].index < results[j].index
 	})
-
-	result := Result{Results: make([]report.Result, 0, len(inputs))}
+	result := Result{Results: make([]report.Result, 0, len(results))}
 	for _, r := range results {
 		result.Results = append(result.Results, r.result)
 		result.Summary.Add(r.result)
 	}
-
-	return result, nil
+	return result
 }
 
-func (a *App) processFile(ctx context.Context, binaryPath *string, rootInput, input string, cfg cli.Config, onProgress func(report.ProgressStage, float64)) report.Result {
-	if onProgress != nil {
-		onProgress(report.StageAnalyzing, 0.0)
-	}
-
+func (a *App) analyzeFile(rootInput, input string, cfg cli.Config) analyzedFile {
 	sourceInfo, err := os.Stat(input)
 	if err != nil {
-		return report.Result{InputPath: input, Status: report.StatusFailed, Message: err.Error()}
-	}
-
-	if err := ctx.Err(); err != nil {
-		return report.Result{InputPath: input, Status: report.StatusFailed, SourceBytes: sourceInfo.Size(), Message: err.Error()}
+		return analyzedFile{
+			inputPath:  input,
+			sourceInfo: sourceInfo,
+			result:     report.Result{InputPath: input, Status: report.StatusFailed, Message: err.Error()},
+		}
 	}
 
 	outputPath, err := fs.BuildOutputPath(rootInput, input, cfg.OutputDir)
 	if err != nil {
-		return report.Result{InputPath: input, Status: report.StatusFailed, SourceBytes: sourceInfo.Size(), Message: err.Error()}
+		return analyzedFile{
+			inputPath:  input,
+			sourceInfo: sourceInfo,
+			result:     report.Result{InputPath: input, Status: report.StatusFailed, SourceBytes: sourceInfo.Size(), Message: err.Error()},
+		}
 	}
 
 	result := report.Result{
@@ -200,25 +292,45 @@ func (a *App) processFile(ctx context.Context, binaryPath *string, rootInput, in
 			if outInfo, statErr := os.Stat(outputPath); statErr == nil {
 				result.OutputBytes = outInfo.Size()
 			}
-			return result
+			return analyzedFile{
+				inputPath:  input,
+				outputPath: outputPath,
+				sourceInfo: sourceInfo,
+				result:     result,
+			}
 		} else if !os.IsNotExist(err) {
 			result.Status = report.StatusFailed
 			result.Message = err.Error()
-			return result
+			return analyzedFile{
+				inputPath:  input,
+				outputPath: outputPath,
+				sourceInfo: sourceInfo,
+				result:     result,
+			}
 		}
 	}
 
 	if cfg.DryRun {
 		result.Status = report.StatusSkipped
 		result.Message = "dry-run"
-		return result
+		return analyzedFile{
+			inputPath:  input,
+			outputPath: outputPath,
+			sourceInfo: sourceInfo,
+			result:     result,
+		}
 	}
 
 	if strings.EqualFold(filepath.Ext(input), ".webp") && !cfg.ReencodeWebP {
 		if err := fs.CopyFile(input, outputPath); err != nil {
 			result.Status = report.StatusFailed
 			result.Message = err.Error()
-			return result
+			return analyzedFile{
+				inputPath:  input,
+				outputPath: outputPath,
+				sourceInfo: sourceInfo,
+				result:     result,
+			}
 		}
 		outInfo, err := os.Stat(outputPath)
 		if err == nil {
@@ -226,190 +338,199 @@ func (a *App) processFile(ctx context.Context, binaryPath *string, rootInput, in
 		}
 		result.Status = report.StatusSkipped
 		result.Message = "copied existing webp"
-		return result
+		return analyzedFile{
+			inputPath:  input,
+			outputPath: outputPath,
+			sourceInfo: sourceInfo,
+			result:     result,
+		}
 	}
 
-	if err := ctx.Err(); err != nil {
-		result.Status = report.StatusFailed
-		result.Message = err.Error()
-		return result
-	}
-
-	resolvedBinaryPath, err := ensureBinaryPath(binaryPath)
+	features, original, err := analyze.AnalyzeFile(input)
 	if err != nil {
 		result.Status = report.StatusFailed
 		result.Message = err.Error()
-		return result
+		return analyzedFile{
+			inputPath:  input,
+			outputPath: outputPath,
+			sourceInfo: sourceInfo,
+			result:     result,
+		}
 	}
 
-	if err := ctx.Err(); err != nil {
-		result.Status = report.StatusFailed
-		result.Message = err.Error()
-		return result
-	}
-
-	features, err := analyze.AnalyzeFile(input)
-	if err != nil {
-		result.Status = report.StatusFailed
-		result.Message = err.Error()
-		return result
-	}
 	kind := analyze.Classify(features)
-	candidates := strategy.BuildCandidates(kind, features, cfg.Quality, strategy.Mode(cfg.Mode))
-	if onProgress != nil {
-		onProgress(report.StageAnalyzing, 1.0)
-	}
-
-	if err := ctx.Err(); err != nil {
-		result.Status = report.StatusFailed
-		result.Message = err.Error()
-		return result
-	}
+	mode := strategy.Mode(cfg.Mode)
+	candidates := strategy.BuildCandidates(kind, features, cfg.Quality, mode)
 
 	if err := fs.EnsureParentDir(outputPath); err != nil {
 		result.Status = report.StatusFailed
 		result.Message = err.Error()
-		return result
+		return analyzedFile{
+			inputPath:  input,
+			outputPath: outputPath,
+			sourceInfo: sourceInfo,
+			result:     result,
+		}
 	}
 
-	if err := ctx.Err(); err != nil {
-		result.Status = report.StatusFailed
-		result.Message = err.Error()
-		return result
-	}
-
-	original, err := decodeGeneric(input)
-	if err != nil {
-		result.Status = report.StatusFailed
-		result.Message = err.Error()
-		return result
-	}
-
-	candidateResults := make([]encode.CandidateResult, 0, len(candidates))
-	totalCandidates := len(candidates)
-
-	// Create a temp directory in the system temp location
 	tempDir, err := os.MkdirTemp("", "img2webp-*")
 	if err != nil {
 		result.Status = report.StatusFailed
 		result.Message = fmt.Sprintf("failed to create temp directory: %s", err)
-		return result
-	}
-	defer os.RemoveAll(tempDir)
-
-	// Process candidates in parallel
-	type candidateJob struct {
-		index     int
-		candidate strategy.Candidate
-	}
-	type candidateOutcome struct {
-		index  int
-		result encode.CandidateResult
-		err    error
+		return analyzedFile{
+			inputPath:  input,
+			outputPath: outputPath,
+			sourceInfo: sourceInfo,
+			result:     result,
+		}
 	}
 
-	jobs := make(chan candidateJob, len(candidates))
-	outcomes := make(chan candidateOutcome, len(candidates))
+	return analyzedFile{
+		inputPath:  input,
+		outputPath: outputPath,
+		features:   features,
+		kind:       kind,
+		mode:       mode,
+		candidates: candidates,
+		sourceInfo: sourceInfo,
+		original:   original,
+		result:     report.Result{InputPath: input, OutputPath: outputPath, SourceBytes: sourceInfo.Size(), Status: report.StatusSuccess},
+		tempDir:    tempDir,
+	}
+}
 
-	// Start workers for parallel encoding (use min of candidates count and CPU count)
-	numWorkers := min(len(candidates), runtime.NumCPU())
+func (a *App) encodeFile(ctx context.Context, binaryPath *string, file analyzedFile) encodedFile {
+	resolvedBinaryPath, err := ensureBinaryPath(binaryPath)
+	if err != nil {
+		return encodedFile{
+			index:      file.index,
+			inputPath:  file.inputPath,
+			outputPath: file.outputPath,
+			sourceInfo: file.sourceInfo,
+			result:     report.Result{InputPath: file.inputPath, Status: report.StatusFailed, Message: err.Error()},
+			tempDir:    file.tempDir,
+		}
+	}
+
+	// Build staged candidates
+	groups := strategy.BuildCandidateGroups(file.kind, file.features, 0, file.mode)
+
+	candidateResults := make([]encode.CandidateResult, 0, 5)
+	var mu sync.Mutex
+	var errRec errorRecorder
+
+	// Stage 1: Test first candidate (middle quality)
+	firstResult := a.encodeCandidate(ctx, resolvedBinaryPath, file, groups.First, 0, &mu, &candidateResults, &errRec)
+	if errRec.firstError != nil && len(candidateResults) == 0 {
+		return encodedFile{
+			index:      file.index,
+			inputPath:  file.inputPath,
+			outputPath: file.outputPath,
+			sourceInfo: file.sourceInfo,
+			result:     report.Result{InputPath: file.inputPath, Status: report.StatusFailed, Message: errRec.firstError.Error(), SourceBytes: file.sourceInfo.Size()},
+			tempDir:    file.tempDir,
+		}
+	}
+
+	// Stage 2: Based on first result, decide next candidates (parallel)
+	if firstResult != nil && firstResult.Scores.Pass {
+		// First passed - test lower quality candidates in parallel
+		a.encodeCandidatesParallel(ctx, resolvedBinaryPath, file, groups.IfPass, 1, &mu, &candidateResults, &errRec)
+	} else {
+		// First failed - test higher quality + special candidates in parallel
+		allCandidates := append(groups.IfFail, groups.Special...)
+		a.encodeCandidatesParallel(ctx, resolvedBinaryPath, file, allCandidates, 1, &mu, &candidateResults, &errRec)
+	}
+
+	if len(candidateResults) == 0 && errRec.firstError != nil {
+		return encodedFile{
+			index:      file.index,
+			inputPath:  file.inputPath,
+			outputPath: file.outputPath,
+			sourceInfo: file.sourceInfo,
+			result:     report.Result{InputPath: file.inputPath, Status: report.StatusFailed, Message: errRec.firstError.Error(), SourceBytes: file.sourceInfo.Size()},
+			tempDir:    file.tempDir,
+		}
+	}
+
+	allCandidates := []strategy.Candidate{groups.First}
+	allCandidates = append(allCandidates, groups.IfPass...)
+	allCandidates = append(allCandidates, groups.IfFail...)
+	allCandidates = append(allCandidates, groups.Special...)
+
+	return encodedFile{
+		index:            file.index,
+		inputPath:        file.inputPath,
+		outputPath:       file.outputPath,
+		candidates:       allCandidates,
+		candidateResults: candidateResults,
+		sourceInfo:       file.sourceInfo,
+		result:           file.result,
+		tempDir:          file.tempDir,
+	}
+}
+
+func (a *App) encodeCandidate(ctx context.Context, binaryPath string, file analyzedFile, c strategy.Candidate, idx int, mu *sync.Mutex, results *[]encode.CandidateResult, errRec *errorRecorder) *encode.CandidateResult {
+	if ctx.Err() != nil {
+		errRec.record(ctx.Err())
+		return nil
+	}
+
+	tmpOut := filepath.Join(file.tempDir, fmt.Sprintf("candidate-%d.webp", idx))
+
+	if err := acquireCwebpSlot(ctx); err != nil {
+		errRec.record(err)
+		return nil
+	}
+	defer releaseCwebpSlot()
+
+	if err := encode.RunCWebP(ctx, binaryPath, file.inputPath, tmpOut, c); err != nil {
+		errRec.record(err)
+		return nil
+	}
+
+	candidateImg, err := decodeWebP(tmpOut)
+	if err != nil {
+		errRec.record(err)
+		return nil
+	}
+
+	stats, err := os.Stat(tmpOut)
+	if err != nil {
+		errRec.record(err)
+		return nil
+	}
+
+	scores := encode.Scores{
+		SSIM:      metric.SSIM(file.original, candidateImg),
+		Edge:      metric.EdgeScore(file.original, candidateImg),
+		AlphaEdge: metric.AlphaEdgeScore(file.original, candidateImg),
+	}
+	scores.Pass = encode.EvaluatePass(file.kind, scores)
+
+	result := encode.CandidateResult{
+		Path:   tmpOut,
+		Size:   stats.Size(),
+		Scores: scores,
+	}
+
+	mu.Lock()
+	*results = append(*results, result)
+	mu.Unlock()
+
+	return &result
+}
+
+func (a *App) encodeCandidatesParallel(ctx context.Context, binaryPath string, file analyzedFile, candidates []strategy.Candidate, startIdx int, mu *sync.Mutex, results *[]encode.CandidateResult, errRec *errorRecorder) {
 	var wg sync.WaitGroup
-	for w := 0; w < numWorkers; w++ {
+	for i, c := range candidates {
 		wg.Add(1)
-		go func() {
+		go func(idx int, candidate strategy.Candidate) {
 			defer wg.Done()
-			for job := range jobs {
-				tmpOut := filepath.Join(tempDir, fmt.Sprintf("candidate-%d.webp", job.index))
-
-				if err := encode.RunCWebP(ctx, resolvedBinaryPath, input, tmpOut, job.candidate); err != nil {
-					outcomes <- candidateOutcome{index: job.index, err: err}
-					continue
-				}
-
-				candidateImg, err := decodeWebP(tmpOut)
-				if err != nil {
-					outcomes <- candidateOutcome{index: job.index, err: err}
-					continue
-				}
-
-				stats, err := os.Stat(tmpOut)
-				if err != nil {
-					outcomes <- candidateOutcome{index: job.index, err: err}
-					continue
-				}
-
-				scores := encode.Scores{
-					SSIM:      metric.SSIM(original, candidateImg),
-					Edge:      metric.EdgeScore(original, candidateImg),
-					AlphaEdge: metric.AlphaEdgeScore(original, candidateImg),
-				}
-				scores.Pass = encode.EvaluatePass(kind, scores)
-				outcomes <- candidateOutcome{
-					index: job.index,
-					result: encode.CandidateResult{Path: tmpOut, Size: stats.Size(), Scores: scores},
-				}
-			}
-		}()
+			a.encodeCandidate(ctx, binaryPath, file, candidate, startIdx+idx, mu, results, errRec)
+		}(i, c)
 	}
-
-	// Send all jobs in a separate goroutine so workers can start immediately
-	go func() {
-		for i, candidate := range candidates {
-			jobs <- candidateJob{index: i, candidate: candidate}
-		}
-		close(jobs)
-	}()
-
-	// Wait for workers to finish and close outcomes
-	go func() {
-		wg.Wait()
-		close(outcomes)
-	}()
-
-	// Collect results and report progress
-	for outcome := range outcomes {
-		if err := ctx.Err(); err != nil {
-			result.Status = report.StatusFailed
-			result.Message = err.Error()
-			return result
-		}
-
-		if outcome.err == nil {
-			candidateResults = append(candidateResults, outcome.result)
-		}
-
-		// Report progress
-		completed := len(candidateResults)
-		stageProgress := float64(completed) / float64(totalCandidates)
-		if onProgress != nil {
-			onProgress(report.StageEncoding, stageProgress)
-		}
-	}
-
-	if onProgress != nil {
-		onProgress(report.StageScoring, 1.0)
-	}
-
-	picked, ok := encode.PickSmallestPassingWithSizeCheck(candidateResults, sourceInfo.Size())
-	if !ok {
-		result.Status = report.StatusFailed
-		result.Message = "no candidate met quality thresholds"
-		return result
-	}
-
-	// Copy the picked file to the output path (since temp dir may be on different filesystem)
-	if err := fs.CopyFile(picked.Path, outputPath); err != nil {
-		result.Status = report.StatusFailed
-		result.Message = err.Error()
-		return result
-	}
-
-	if outInfo, err := os.Stat(outputPath); err == nil {
-		result.OutputBytes = outInfo.Size()
-	}
-	result.Status = report.StatusSuccess
-	result.Message = string(kind)
-	return result
+	wg.Wait()
 }
 
 func rootInputPath(inputPath string) (string, error) {
@@ -438,17 +559,6 @@ func ensureBinaryPath(binaryPath *string) (string, error) {
 	}
 	*binaryPath = path
 	return path, nil
-}
-
-func decodeGeneric(path string) (image.Image, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	img, _, err := image.Decode(f)
-	return img, err
 }
 
 func decodeWebP(path string) (image.Image, error) {

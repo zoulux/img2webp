@@ -12,8 +12,8 @@ func TestBuildCandidatesForPhotoIncludesAroundTargetQuality(t *testing.T) {
 	if len(candidates) != 5 {
 		t.Fatalf("len(candidates) = %d, want 5", len(candidates))
 	}
-	// Check the main quality window
-	if candidates[0].Quality != 82 || candidates[1].Quality != 85 || candidates[2].Quality != 88 {
+	// Check the main quality window (now ordered: q, q-3, q+3)
+	if candidates[0].Quality != 85 || candidates[1].Quality != 82 || candidates[2].Quality != 88 {
 		t.Fatalf("unexpected main candidate qualities: %+v", candidates[:3])
 	}
 	// Check the additional lower quality candidates
@@ -61,13 +61,13 @@ func TestBuildCandidatesModeGraphicOverridesDetectedKind(t *testing.T) {
 
 func TestBuildCandidatesUsesDefaultQualityAndClampsExtremes(t *testing.T) {
 	graphic := BuildCandidates(analyze.KindGraphic, analyze.Features{Width: 640, Height: 480}, 0, ModeAuto)
-	if graphic[1].Quality != 90 {
-		t.Fatalf("graphic default quality = %d, want 90", graphic[1].Quality)
+	if graphic[0].Quality != 90 {
+		t.Fatalf("graphic default quality = %d, want 90", graphic[0].Quality)
 	}
 
 	clamped := BuildCandidates(analyze.KindPhoto, analyze.Features{}, 1, ModeAuto)
-	if clamped[0].Quality != 1 {
-		t.Fatalf("low quality candidate = %d, want 1", clamped[0].Quality)
+	if clamped[0].Quality != 2 {
+		t.Fatalf("first candidate quality = %d, want 2 (adjusted from 1)", clamped[0].Quality)
 	}
 	clamped = BuildCandidates(analyze.KindPhoto, analyze.Features{}, 100, ModeAuto)
 	if clamped[2].Quality != 100 {
@@ -77,10 +77,10 @@ func TestBuildCandidatesUsesDefaultQualityAndClampsExtremes(t *testing.T) {
 
 func TestBuildCandidatesKeepsLowQualityCandidatesDistinctAtClampBoundary(t *testing.T) {
 	candidates := BuildCandidates(analyze.KindPhoto, analyze.Features{}, 1, ModeAuto)
-	// At quality=1, we get: q-3=1(clamped), q=1(clamped)->adjusted to 2, q+3=4, q-6=1(clamped), q-12=1(clamped)
-	// The qualityWindow function adjusts mid when low==mid
+	// At quality=1, qualityWindow adjusts: mid=2, low=1, high=4
+	// Now ordered: q=2, q-3=1, q+3=4
 	got := []int{candidates[0].Quality, candidates[1].Quality, candidates[2].Quality}
-	want := []int{1, 2, 4}
+	want := []int{2, 1, 4}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("qualities[%d] = %d, want %d (all=%v)", i, got[i], want[i], got)
@@ -90,9 +90,10 @@ func TestBuildCandidatesKeepsLowQualityCandidatesDistinctAtClampBoundary(t *test
 
 func TestBuildCandidatesKeepsHighQualityCandidatesDistinctAtClampBoundary(t *testing.T) {
 	candidates := BuildCandidates(analyze.KindPhoto, analyze.Features{}, 100, ModeAuto)
-	// At quality=100, the main window is: q-3=97, q=99, q+3=100(clamped)->adjusted to 99->98
+	// At quality=100, qualityWindow gives: mid=99, low=97, high=100
+	// Now ordered: q=99, q-3=97, q+3=100
 	got := []int{candidates[0].Quality, candidates[1].Quality, candidates[2].Quality}
-	want := []int{97, 99, 100}
+	want := []int{99, 97, 100}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("qualities[%d] = %d, want %d (all=%v)", i, got[i], want[i], got)
@@ -109,5 +110,60 @@ func TestBuildCandidatesModeGraphicPreservesTransparentGraphicKind(t *testing.T)
 	}
 	if got := candidates[len(candidates)-1].PassName; got != "alpha-near-lossless" {
 		t.Fatalf("last candidate PassName = %q, want alpha-near-lossless", got)
+	}
+}
+
+func TestBuildCandidateGroupsFirstIsMiddleQuality(t *testing.T) {
+	f := analyze.Features{Width: 1920, Height: 1080}
+	groups := BuildCandidateGroups(analyze.KindPhoto, f, 82, ModeAuto)
+
+	// First should be middle quality
+	if groups.First.Quality != 82 {
+		t.Fatalf("First quality = %d, want 82", groups.First.Quality)
+	}
+	if groups.First.PassName != "q" {
+		t.Fatalf("First PassName = %q, want q", groups.First.PassName)
+	}
+
+	// IfPass should have lower quality candidates
+	if len(groups.IfPass) != 3 {
+		t.Fatalf("len(IfPass) = %d, want 3", len(groups.IfPass))
+	}
+	for i, c := range groups.IfPass {
+		if c.Quality >= groups.First.Quality {
+			t.Fatalf("IfPass[%d] quality %d should be < First quality %d", i, c.Quality, groups.First.Quality)
+		}
+	}
+
+	// IfFail should have higher quality candidates
+	if len(groups.IfFail) != 1 {
+		t.Fatalf("len(IfFail) = %d, want 1", len(groups.IfFail))
+	}
+	for i, c := range groups.IfFail {
+		if c.Quality <= groups.First.Quality {
+			t.Fatalf("IfFail[%d] quality %d should be > First quality %d", i, c.Quality, groups.First.Quality)
+		}
+	}
+}
+
+func TestBuildCandidateGroupsLosslessReturnsOnlyFirst(t *testing.T) {
+	groups := BuildCandidateGroups(analyze.KindPhoto, analyze.Features{}, 75, ModeLossless)
+
+	if !groups.First.Lossless {
+		t.Fatal("First should be lossless")
+	}
+	if len(groups.IfPass) != 0 || len(groups.IfFail) != 0 || len(groups.Special) != 0 {
+		t.Fatal("Lossless mode should have no other candidates")
+	}
+}
+
+func TestBuildCandidateGroupsGraphicHasSpecial(t *testing.T) {
+	groups := BuildCandidateGroups(analyze.KindGraphic, analyze.Features{Width: 800, Height: 600}, 0, ModeAuto)
+
+	if len(groups.Special) != 1 {
+		t.Fatalf("len(Special) = %d, want 1", len(groups.Special))
+	}
+	if groups.Special[0].PassName != "near-lossless" {
+		t.Fatalf("Special PassName = %q, want near-lossless", groups.Special[0].PassName)
 	}
 }

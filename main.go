@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/zoulux/img2webp/internal/app"
 	"github.com/zoulux/img2webp/internal/cli"
@@ -44,10 +45,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer stop()
 
 	pw := report.NewProgressWriter(stderr)
+	start := time.Now()
 	result, err := newApp(&app.Options{OnProgress: pw.Advance}).Run(ctx, cfg)
 	pw.Finish()
+	elapsed := time.Since(start).Round(time.Millisecond)
+
 	if result.Summary.TotalFiles > 0 {
 		report.PrintSummary(stdout, result.Summary)
+		fmt.Fprintf(stdout, "elapsed: %v\n", elapsed)
 	}
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -55,6 +60,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if result.Summary.TotalFiles == 0 {
 		report.PrintSummary(stdout, result.Summary)
+		fmt.Fprintf(stdout, "elapsed: %v\n", elapsed)
 	}
 	return 0
 }
