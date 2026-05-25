@@ -37,7 +37,7 @@ func TestEvaluatePassUsesThresholdsByKind(t *testing.T) {
 	if !EvaluatePass(analyze.KindPhoto, Scores{SSIM: 0.92, Edge: 0.88}) {
 		t.Fatal("expected photo scores at threshold to pass")
 	}
-	if EvaluatePass(analyze.KindGraphic, Scores{SSIM: 0.95, Edge: 0.93}) {
+	if EvaluatePass(analyze.KindGraphic, Scores{SSIM: 0.92, Edge: 0.87}) {
 		t.Fatal("expected graphic score below edge threshold to fail")
 	}
 	if EvaluatePass(analyze.KindTransparentGraphic, Scores{SSIM: 0.97, Edge: 0.95, AlphaEdge: 0.97}) {

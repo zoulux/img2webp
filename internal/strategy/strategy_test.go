@@ -24,15 +24,13 @@ func TestBuildCandidatesForPhotoIncludesAroundTargetQuality(t *testing.T) {
 
 func TestBuildCandidatesForTransparentGraphicAddsAlphaCandidate(t *testing.T) {
 	f := analyze.Features{Width: 128, Height: 128, HasAlpha: true}
-	candidates := BuildCandidates(analyze.KindTransparentGraphic, f, 92, ModeAuto)
-	foundHighAlpha := false
-	for _, c := range candidates {
-		if c.AlphaQuality == 100 {
-			foundHighAlpha = true
-		}
+	groups := BuildCandidateGroups(analyze.KindTransparentGraphic, f, 92, ModeAuto)
+	// Transparent graphic should have alpha-near-lossless candidate with AlphaQuality=100 in Special
+	if len(groups.Special) != 1 {
+		t.Fatal("expected transparent graphic to have one special candidate")
 	}
-	if !foundHighAlpha {
-		t.Fatal("expected transparent graphic candidates to include alpha_q=100")
+	if groups.Special[0].AlphaQuality != 100 || groups.Special[0].PassName != "alpha-near-lossless" {
+		t.Fatalf("expected alpha-near-lossless with alpha_q=100, got %+v", groups.Special[0])
 	}
 }
 
@@ -49,12 +47,14 @@ func TestBuildCandidatesModeLosslessReturnsSingleLosslessCandidate(t *testing.T)
 
 func TestBuildCandidatesModeGraphicOverridesDetectedKind(t *testing.T) {
 	candidates := BuildCandidates(analyze.KindPhoto, analyze.Features{Width: 800, Height: 600}, 0, ModeGraphic)
-	if got := candidates[len(candidates)-1].PassName; got != "near-lossless" {
-		t.Fatalf("last candidate PassName = %q, want near-lossless", got)
-	}
+	// Graphic mode no longer adds near-lossless candidate
+	// All candidates should be quality-based
 	for _, candidate := range candidates {
 		if candidate.Kind != analyze.KindGraphic {
 			t.Fatalf("candidate Kind = %q, want %q", candidate.Kind, analyze.KindGraphic)
+		}
+		if candidate.NearLossless > 0 {
+			t.Fatal("unexpected near-lossless candidate in graphic mode")
 		}
 	}
 }
@@ -108,8 +108,9 @@ func TestBuildCandidatesModeGraphicPreservesTransparentGraphicKind(t *testing.T)
 			t.Fatalf("candidate Kind = %q, want %q", candidate.Kind, analyze.KindTransparentGraphic)
 		}
 	}
-	if got := candidates[len(candidates)-1].PassName; got != "alpha-near-lossless" {
-		t.Fatalf("last candidate PassName = %q, want alpha-near-lossless", got)
+	// BuildCandidates no longer adds alpha-near-lossless; use BuildCandidateGroups for that
+	if got := candidates[len(candidates)-1].PassName; got != "q-12" {
+		t.Fatalf("last candidate PassName = %q, want q-12", got)
 	}
 }
 
@@ -157,13 +158,21 @@ func TestBuildCandidateGroupsLosslessReturnsOnlyFirst(t *testing.T) {
 	}
 }
 
-func TestBuildCandidateGroupsGraphicHasSpecial(t *testing.T) {
+func TestBuildCandidateGroupsGraphicHasNoSpecial(t *testing.T) {
 	groups := BuildCandidateGroups(analyze.KindGraphic, analyze.Features{Width: 800, Height: 600}, 0, ModeAuto)
+
+	if len(groups.Special) != 0 {
+		t.Fatalf("len(Special) = %d, want 0 (plain graphics don't need near-lossless)", len(groups.Special))
+	}
+}
+
+func TestBuildCandidateGroupsTransparentGraphicHasSpecial(t *testing.T) {
+	groups := BuildCandidateGroups(analyze.KindTransparentGraphic, analyze.Features{Width: 800, Height: 600, HasAlpha: true}, 0, ModeAuto)
 
 	if len(groups.Special) != 1 {
 		t.Fatalf("len(Special) = %d, want 1", len(groups.Special))
 	}
-	if groups.Special[0].PassName != "near-lossless" {
-		t.Fatalf("Special PassName = %q, want near-lossless", groups.Special[0].PassName)
+	if groups.Special[0].PassName != "alpha-near-lossless" {
+		t.Fatalf("Special PassName = %q, want alpha-near-lossless", groups.Special[0].PassName)
 	}
 }

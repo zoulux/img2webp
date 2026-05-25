@@ -360,6 +360,8 @@ func (a *App) analyzeFile(rootInput, input string, cfg cli.Config) analyzedFile 
 
 	kind := analyze.Classify(features)
 	mode := strategy.Mode(cfg.Mode)
+	// Apply mode to kind for correct threshold evaluation
+	kind = strategy.SelectKind(kind, mode)
 	candidates := strategy.BuildCandidates(kind, features, cfg.Quality, mode)
 
 	if err := fs.EnsureParentDir(outputPath); err != nil {

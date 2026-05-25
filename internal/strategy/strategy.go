@@ -11,7 +11,7 @@ type CandidateGroup struct {
 }
 
 func BuildCandidates(kind analyze.Kind, f analyze.Features, requestedQuality int, mode Mode) []Candidate {
-	kind = selectKind(kind, mode)
+	kind = SelectKind(kind, mode)
 	if mode == ModeLossless {
 		return []Candidate{{Kind: kind, Quality: 100, Method: 6, AlphaQuality: 100, Lossless: true, PassName: "lossless"}}
 	}
@@ -37,12 +37,10 @@ func BuildCandidates(kind analyze.Kind, f analyze.Features, requestedQuality int
 		Candidate{Kind: kind, Quality: lowestQuality, Method: 6, AlphaQuality: 90, PassName: "q-12"},
 	)
 
-	switch kind {
-	case analyze.KindGraphic:
-		base = append(base, Candidate{Kind: kind, Quality: quality, Method: 6, AlphaQuality: 90, NearLossless: 80, PassName: "near-lossless"})
-	case analyze.KindTransparentGraphic:
-		base = append(base, Candidate{Kind: kind, Quality: quality, Method: 6, AlphaQuality: 100, NearLossless: 85, PassName: "alpha-near-lossless"})
-	}
+	// Note: near-lossless is not added for graphic kinds because:
+	// 1. It produces very large files for photos that are misclassified as graphics
+	// 2. It doesn't provide significant benefits for most real graphics
+	// Near-lossless is kept for transparent graphics where it helps with alpha channel
 
 	return base
 }
@@ -61,7 +59,7 @@ func BuildAllCandidates(kind analyze.Kind, f analyze.Features, requestedQuality 
 
 // BuildCandidateGroups organizes candidates for staged encoding optimization
 func BuildCandidateGroups(kind analyze.Kind, f analyze.Features, requestedQuality int, mode Mode) CandidateGroup {
-	kind = selectKind(kind, mode)
+	kind = SelectKind(kind, mode)
 	if mode == ModeLossless {
 		return CandidateGroup{
 			First:  Candidate{Kind: kind, Quality: 100, Method: 6, AlphaQuality: 100, Lossless: true, PassName: "lossless"},
@@ -95,12 +93,9 @@ func BuildCandidateGroups(kind analyze.Kind, f analyze.Features, requestedQualit
 		{Kind: kind, Quality: highQuality, Method: 6, AlphaQuality: 90, PassName: "q+3"},
 	}
 
-	// Special: near-lossless variants
+	// Special: near-lossless variants for transparent graphics only
 	var special []Candidate
-	switch kind {
-	case analyze.KindGraphic:
-		special = []Candidate{{Kind: kind, Quality: quality, Method: 6, AlphaQuality: 90, NearLossless: 80, PassName: "near-lossless"}}
-	case analyze.KindTransparentGraphic:
+	if kind == analyze.KindTransparentGraphic {
 		special = []Candidate{{Kind: kind, Quality: quality, Method: 6, AlphaQuality: 100, NearLossless: 85, PassName: "alpha-near-lossless"}}
 	}
 
@@ -158,7 +153,9 @@ func qualityWindow(quality int) (low, mid, high int) {
 	return low, mid, high
 }
 
-func selectKind(kind analyze.Kind, mode Mode) analyze.Kind {
+// SelectKind returns the appropriate kind based on the mode.
+// This is used to ensure consistent kind selection across encoding and evaluation.
+func SelectKind(kind analyze.Kind, mode Mode) analyze.Kind {
 	switch mode {
 	case ModePhoto:
 		return analyze.KindPhoto

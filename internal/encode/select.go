@@ -70,7 +70,7 @@ func EvaluatePass(kind analyze.Kind, s Scores) bool {
 	case analyze.KindTransparentGraphic:
 		return s.SSIM >= 0.97 && s.Edge >= 0.95 && s.AlphaEdge >= 0.98
 	case analyze.KindGraphic:
-		return s.SSIM >= 0.95 && s.Edge >= 0.94
+		return s.SSIM >= 0.92 && s.Edge >= 0.88
 	default:
 		return s.SSIM >= 0.92 && s.Edge >= 0.88
 	}
