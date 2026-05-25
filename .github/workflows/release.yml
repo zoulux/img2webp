@@ -91,11 +91,7 @@ jobs:
           go-version: '1.26'
 
       - name: Install MinGW-w64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: mingw-w64-x86_64-gcc
+        run: choco install mingw -y
 
       - name: Download OpenCL headers
         shell: pwsh
@@ -111,7 +107,6 @@ jobs:
         shell: pwsh
         env:
           CGO_ENABLED: 1
-          CC: C:\msys64\mingw64\bin\gcc.exe
           CGO_CFLAGS: -IC:/opencl/include
         run: go build -ldflags="-s -w" -o img2webp-windows-amd64.exe .
 
