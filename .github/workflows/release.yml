@@ -104,6 +104,7 @@ jobs:
           $headers = @("cl.h", "cl_platform.h", "cl_gl.h", "cl_gl_ext.h", "cl_ext.h", "cl_version.h", "cl_icd.h")
           $url = "https://raw.githubusercontent.com/KhronosGroup/OpenCL-Headers/main/CL"
           New-Item -ItemType Directory -Force -Path "C:\opencl\include\CL"
+          New-Item -ItemType Directory -Force -Path "C:\opencl\lib"
           foreach ($h in $headers) {
             Invoke-WebRequest -Uri "$url/$h" -OutFile "C:\opencl\include\CL\$h"
           }
