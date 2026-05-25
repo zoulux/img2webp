@@ -88,10 +88,6 @@ jobs:
           update: true
           install: mingw-w64-x86_64-gcc
 
-      - name: Install CUDA Toolkit (for OpenCL headers and libs)
-        shell: pwsh
-        run: choco install cuda -y --no-progress
-
       - name: Build
         shell: pwsh
         env:

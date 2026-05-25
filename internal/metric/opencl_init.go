@@ -1,4 +1,4 @@
-//go:build (linux || windows || darwin) && cgo
+//go:build (linux || darwin) && cgo
 
 package metric
 
