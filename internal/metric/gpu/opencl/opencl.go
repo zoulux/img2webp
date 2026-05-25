@@ -5,8 +5,8 @@ package opencl
 /*
 #cgo linux CFLAGS: -I/usr/include -I/usr/local/include
 #cgo linux LDFLAGS: -lOpenCL
-#cgo windows CFLAGS: -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/include"
-#cgo windows LDFLAGS: -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/lib/x64" -lOpenCL
+#cgo windows CFLAGS: -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6/include" -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.5/include" -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4/include" -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.3/include" -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.2/include" -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.1/include" -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.0/include" -I"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/include"
+#cgo windows LDFLAGS: -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.6/lib/x64" -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.5/lib/x64" -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4/lib/x64" -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.3/lib/x64" -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.2/lib/x64" -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.1/lib/x64" -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.0/lib/x64" -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8/lib/x64" -lOpenCL
 #cgo darwin CFLAGS: -x objective-c
 #cgo darwin LDFLAGS: -framework OpenCL
 
