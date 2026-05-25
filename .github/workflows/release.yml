@@ -53,17 +53,21 @@ jobs:
         with:
           go-version: '1.26'
 
-      - name: Install OpenCL headers and libs (amd64)
+      - name: Install OpenCL (amd64)
         if: matrix.arch == 'amd64'
         run: sudo apt-get install -y ocl-icd-opencl-dev
 
       - name: Install cross-compiler and OpenCL (arm64)
         if: matrix.arch == 'arm64'
         run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          sudo apt-get install -y ocl-icd-opencl-dev
-          sudo mkdir -p /usr/lib/aarch64-linux-gnu
-          sudo ln -sf /usr/lib/x86_64-linux-gnu/libOpenCL.so /usr/lib/aarch64-linux-gnu/libOpenCL.so
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          # Download and build OCL-ICD for arm64
+          git clone https://github.com/OCL-dev/ocl-icd.git
+          cd ocl-icd
+          ./configure --host=aarch64-linux-gnu --prefix=/usr/aarch64-linux-gnu
+          make -j$(nproc)
+          sudo make install
+          cd ..
 
       - name: Build
         env:
@@ -93,21 +97,50 @@ jobs:
       - name: Install MinGW-w64
         run: choco install mingw -y
 
-      - name: Download OpenCL headers
+      - name: Download OpenCL SDK
         shell: pwsh
         run: |
-          $headers = @("cl.h", "cl_platform.h", "cl_gl.h", "cl_gl_ext.h", "cl_ext.h", "cl_version.h")
+          # Download OpenCL headers
+          $headers = @("cl.h", "cl_platform.h", "cl_gl.h", "cl_gl_ext.h", "cl_ext.h", "cl_version.h", "cl_icd.h")
           $url = "https://raw.githubusercontent.com/KhronosGroup/OpenCL-Headers/main/CL"
           New-Item -ItemType Directory -Force -Path "C:\opencl\include\CL"
           foreach ($h in $headers) {
             Invoke-WebRequest -Uri "$url/$h" -OutFile "C:\opencl\include\CL\$h"
           }
+          # Create OpenCL.def for import library
+          @"
+          LIBRARY OpenCL
+          EXPORTS
+            clGetPlatformIDs
+            clGetPlatformInfo
+            clGetDeviceIDs
+            clGetDeviceInfo
+            clCreateContext
+            clReleaseContext
+            clCreateCommandQueue
+            clReleaseCommandQueue
+            clCreateBuffer
+            clReleaseMemObject
+            clCreateProgramWithSource
+            clReleaseProgram
+            clBuildProgram
+            clCreateKernel
+            clReleaseKernel
+            clSetKernelArg
+            clEnqueueWriteBuffer
+            clEnqueueReadBuffer
+            clEnqueueNDRangeKernel
+            clFinish
+          "@ | Out-File -FilePath "C:\opencl\lib\OpenCL.def" -Encoding ascii
+          # Generate import library
+          C:\mingw64\bin\dlltool.exe -d C:\opencl\lib\OpenCL.def -l C:\opencl\lib\libOpenCL.a
 
       - name: Build
         shell: pwsh
         env:
           CGO_ENABLED: 1
           CGO_CFLAGS: -IC:/opencl/include
+          CGO_LDFLAGS: -LC:/opencl/lib -lOpenCL
         run: go build -ldflags="-s -w" -o img2webp-windows-amd64.exe .
 
       - name: Upload artifact

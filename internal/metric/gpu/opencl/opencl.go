@@ -15,6 +15,8 @@ package opencl
 #else
 #include <CL/cl.h>
 #endif
+#include <stdlib.h>
+#include <string.h>
 
 // OpenCL kernel source code
 static const char* kernelSource = R"(
