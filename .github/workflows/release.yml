@@ -88,11 +88,22 @@ jobs:
           update: true
           install: mingw-w64-x86_64-gcc
 
+      - name: Download OpenCL headers
+        shell: pwsh
+        run: |
+          $headers = @("cl.h", "cl_platform.h", "cl_gl.h", "cl_gl_ext.h", "cl_ext.h", "cl_version.h")
+          $url = "https://raw.githubusercontent.com/KhronosGroup/OpenCL-Headers/main/CL"
+          New-Item -ItemType Directory -Force -Path "C:\opencl\include\CL"
+          foreach ($h in $headers) {
+            Invoke-WebRequest -Uri "$url/$h" -OutFile "C:\opencl\include\CL\$h"
+          }
+
       - name: Build
         shell: pwsh
         env:
           CGO_ENABLED: 1
           CC: C:\msys64\mingw64\bin\gcc.exe
+          CGO_CFLAGS: -IC:/opencl/include
         run: go build -ldflags="-s -w" -o img2webp-windows-amd64.exe .
 
       - name: Upload artifact
