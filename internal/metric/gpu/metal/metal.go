@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && arm64
 
 // Package metal provides Metal GPU acceleration for metric computation on macOS.
 package metal

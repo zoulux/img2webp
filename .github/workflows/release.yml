@@ -42,9 +42,9 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            cgo: true
+            cc: gcc
           - arch: arm64
-            cgo: false
+            cc: aarch64-linux-gnu-gcc
     steps:
       - uses: actions/checkout@v4
 
@@ -53,14 +53,23 @@ jobs:
         with:
           go-version: '1.26'
 
-      - name: Install OpenCL (amd64)
+      - name: Install OpenCL headers and libs (amd64)
         if: matrix.arch == 'amd64'
         run: sudo apt-get install -y ocl-icd-opencl-dev
 
+      - name: Install cross-compiler and OpenCL (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y ocl-icd-opencl-dev
+          sudo mkdir -p /usr/lib/aarch64-linux-gnu
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libOpenCL.so /usr/lib/aarch64-linux-gnu/libOpenCL.so
+
       - name: Build
         env:
-          CGO_ENABLED: ${{ matrix.cgo && '1' || '0' }}
+          CGO_ENABLED: 1
           GOARCH: ${{ matrix.arch }}
+          CC: ${{ matrix.cc }}
         run: |
           go build -ldflags="-s -w" -o img2webp-linux-${{ matrix.arch }} .
 
