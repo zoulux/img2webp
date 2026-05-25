@@ -40,7 +40,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            cgo: true
+          - arch: arm64
+            cgo: false
     steps:
       - uses: actions/checkout@v4
 
@@ -53,16 +57,9 @@ jobs:
         if: matrix.arch == 'amd64'
         run: sudo apt-get install -y ocl-icd-opencl-dev
 
-      - name: Set up cross-compiler (arm64)
-        if: matrix.arch == 'arm64'
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-
       - name: Build
         env:
-          CGO_ENABLED: 1
+          CGO_ENABLED: ${{ matrix.cgo && '1' || '0' }}
           GOARCH: ${{ matrix.arch }}
         run: |
           go build -ldflags="-s -w" -o img2webp-linux-${{ matrix.arch }} .
