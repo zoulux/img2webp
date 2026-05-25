@@ -43,8 +43,10 @@ jobs:
         include:
           - arch: amd64
             cc: gcc
+            opencl: true
           - arch: arm64
             cc: aarch64-linux-gnu-gcc
+            opencl: false
     steps:
       - uses: actions/checkout@v4
 
@@ -54,20 +56,12 @@ jobs:
           go-version: '1.26'
 
       - name: Install OpenCL (amd64)
-        if: matrix.arch == 'amd64'
+        if: matrix.opencl
         run: sudo apt-get install -y ocl-icd-opencl-dev
 
-      - name: Install cross-compiler and OpenCL (arm64)
+      - name: Install cross-compiler (arm64)
         if: matrix.arch == 'arm64'
-        run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          # Download and build OCL-ICD for arm64
-          git clone https://github.com/OCL-dev/ocl-icd.git
-          cd ocl-icd
-          ./configure --host=aarch64-linux-gnu --prefix=/usr/aarch64-linux-gnu
-          make -j$(nproc)
-          sudo make install
-          cd ..
+        run: sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Build
         env:
