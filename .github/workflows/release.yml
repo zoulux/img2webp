@@ -27,14 +27,13 @@ jobs:
           CGO_ENABLED: 1
           GOARCH: ${{ matrix.arch }}
         run: |
-          BINARY_NAME=img2webp-darwin-${{ matrix.arch }}
-          go build -ldflags="-s -w" -o $BINARY_NAME .
+          go build -ldflags="-s -w" -o img2webp-darwin-${{ matrix.arch }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BINARY_NAME }}
-          path: ${{ env.BINARY_NAME }}
+          name: img2webp-darwin-${{ matrix.arch }}
+          path: img2webp-darwin-${{ matrix.arch }}
           if-no-files-found: error
 
   build-linux:
@@ -66,14 +65,13 @@ jobs:
           CGO_ENABLED: 1
           GOARCH: ${{ matrix.arch }}
         run: |
-          BINARY_NAME=img2webp-linux-${{ matrix.arch }}
-          go build -ldflags="-s -w" -o $BINARY_NAME .
+          go build -ldflags="-s -w" -o img2webp-linux-${{ matrix.arch }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BINARY_NAME }}
-          path: ${{ env.BINARY_NAME }}
+          name: img2webp-linux-${{ matrix.arch }}
+          path: img2webp-linux-${{ matrix.arch }}
           if-no-files-found: error
 
   build-windows:
