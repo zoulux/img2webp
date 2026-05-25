@@ -8,6 +8,7 @@ A high-performance image-to-WebP converter with automatic quality optimization.
 - **Multi-candidate Parallel Encoding** — Tests multiple quality candidates in parallel, picks the smallest passing quality thresholds
 - **Content-Aware Processing** — Detects photos, graphics, and alpha channels for appropriate encoding strategy
 - **Embedded Binary** — No external dependencies; `cwebp` is embedded for all major platforms
+- **GPU Acceleration** — Automatically detects and uses GPU for quality evaluation (supports Apple Metal, NVIDIA CUDA, OpenCL)
 - **Cross-Platform** — Supports macOS (ARM64/x64), Linux (ARM64/x64), and Windows (x64)
 
 ## Installation
@@ -181,6 +182,23 @@ The tool uses parallel processing at multiple levels:
 - **Candidate-level parallelism** — Encodes multiple quality candidates in parallel per image
 
 On a typical modern machine with 8+ cores, you can expect significant speedup for batch conversions.
+
+### GPU Acceleration
+
+Quality evaluation (SSIM and edge detection) can be accelerated using GPU hardware:
+
+| Platform | GPU Backend | Priority |
+|----------|-------------|----------|
+| macOS | Apple Metal | Metal → OpenCL → CPU |
+| Linux | NVIDIA CUDA / OpenCL | CUDA → OpenCL → CPU |
+| Windows | NVIDIA CUDA / OpenCL | CUDA → OpenCL → CPU |
+
+**Supported GPUs:**
+- **Apple Metal**: All Apple Silicon GPUs (M1/M2/M3/M4) and Intel/AMD GPUs on macOS
+- **NVIDIA CUDA**: All CUDA-capable NVIDIA GPUs on Linux and Windows
+- **OpenCL**: AMD, Intel, and NVIDIA GPUs that support OpenCL
+
+GPU acceleration is automatically detected at runtime with silent fallback to CPU when unavailable. For NVIDIA GPUs, CUDA is preferred over OpenCL for better performance. Discrete GPUs are prioritized over integrated GPUs when multiple GPUs are present.
 
 ## Dependencies
 

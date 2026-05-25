@@ -10,10 +10,26 @@ import (
 var gpuBackend gpu.Backend
 
 func init() {
-	// Initialize GPU backend on macOS
+	// 1. Try Metal (macOS only)
 	if runtime.GOOS == "darwin" {
 		gpuBackend = initMetalBackend()
+		if gpuBackend != nil && gpuBackend.Available() {
+			return
+		}
 	}
+
+	// 2. Try CUDA (Linux/Windows with NVIDIA GPU)
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+		gpuBackend = initCUDABackend()
+		if gpuBackend != nil && gpuBackend.Available() {
+			return
+		}
+	}
+
+	// 3. Try OpenCL (all platforms)
+	gpuBackend = initOpenCLBackend()
+
+	// 4. If none available, CPU is used automatically
 }
 
 // InitGPU initializes GPU acceleration. Returns true if GPU is available.

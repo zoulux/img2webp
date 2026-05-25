@@ -8,6 +8,7 @@
 - **多候选并行编码** — 并行测试多个质量级别，选择最小且满足质量阈值的方案
 - **内容感知处理** — 自动识别照片、图形和透明通道，采用相应编码策略
 - **嵌入式二进制** — 无外部依赖，`cwebp` 已内嵌支持主流平台
+- **GPU 硬件加速** — 自动检测并利用 GPU 加速质量评估（支持 Apple Metal、NVIDIA CUDA、OpenCL）
 - **跨平台支持** — macOS (ARM64/x64)、Linux (ARM64/x64)、Windows (x64)
 
 ## 安装
@@ -181,6 +182,23 @@ img2webp --dry-run images/
 - **候选级并行** — 每张图片并行编码多个质量候选
 
 在典型的现代机器（8+ 核心）上，批量转换可获得显著加速。
+
+### GPU 硬件加速
+
+质量评估（SSIM 和边缘检测）可使用 GPU 硬件加速：
+
+| 平台 | GPU 后端 | 优先级 |
+|------|----------|--------|
+| macOS | Apple Metal | Metal → OpenCL → CPU |
+| Linux | NVIDIA CUDA / OpenCL | CUDA → OpenCL → CPU |
+| Windows | NVIDIA CUDA / OpenCL | CUDA → OpenCL → CPU |
+
+**支持的 GPU：**
+- **Apple Metal**：所有 Apple Silicon GPU（M1/M2/M3/M4）及 macOS 上的 Intel/AMD GPU
+- **NVIDIA CUDA**：Linux 和 Windows 上所有支持 CUDA 的 NVIDIA GPU
+- **OpenCL**：支持 OpenCL 的 AMD、Intel 和 NVIDIA GPU
+
+GPU 加速在运行时自动检测，当不可用时静默回退到 CPU。对于 NVIDIA GPU，优先使用 CUDA 以获得更好的性能。当存在多块显卡时，优先使用独立显卡而非集成显卡。
 
 ## 依赖
 
